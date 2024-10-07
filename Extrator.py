@@ -1,28 +1,27 @@
 
-
 import os
 import asyncio
 import logging
 import csv
-import re
 import random
 from telethon import TelegramClient,  utils, functions
 from datetime import datetime
 from telethon.tl import types as telethon_types
-from telethon.tl.types import ChannelParticipantsAdmins, ChannelParticipantsSearch
 
-if not os.path.exists('sessions'):
-    os.makedirs('sessions')
-    
+MAX_DAYS_ONLINE = 3
+INCLUDE_RECENTLY = True 
+OUTPUT='usuarios_backup.csv'
+MAX_TASKS = 10
+TIMOUT = 600
+DELAY = 30
 
 api_id = os.getenv('api_id')
 api_hash = os.getenv('api_hash')
 if not api_hash or not api_id:
     raise ValueError('Your Should config api_id and api_hash of Telegram in env')
 
-max_tasks = 10
-pattern = re.compile(r"\b[a-zA-Z]")
-OUTPUT='usuarios_backup.csv'
+if not os.path.exists('sessions'):
+    os.makedirs('sessions')
 
 def read_content(file):
     words = []
@@ -71,7 +70,7 @@ class CustomLogger(logging.Logger):
 logger = CustomLogger('Extrator', stdout=True)
 now = datetime.now().timestamp()
 
-async def sleep(seconds=20):
+async def sleep(seconds=DELAY):
     await asyncio.sleep(random.uniform(seconds/10,seconds))
 
     
@@ -87,16 +86,17 @@ def filtrar_user(participant) :
         if participant.bot:
             return False 
     
-
         if str(status).casefold().startswith("userstatusoffline"):
             try:
                 was_online = status.was_online.timestamp()
-                tdelta = abs(now - was_online) / 3600
-                return tdelta <= 72
+                tdelta = abs(now - was_online) / (60 * 60 * 24)
+                return tdelta <= MAX_DAYS_ONLINE
             except:
                 return False
+
         elif status == telethon_types.UserStatusRecently():
-            return True
+            return INCLUDE_RECENTLY
+
         else:
             return False
     except:
@@ -125,7 +125,7 @@ async def export_rapido(client, channel):
     except Exception as e:
         logger.warning(f' Erro no extrator {str(e)}')   
         
-    await sleep(6)
+    await sleep()
     
 
 async def process_entity(client: TelegramClient, chat):
@@ -134,7 +134,7 @@ async def process_entity(client: TelegramClient, chat):
             processados.append(chat.id)
 
             try:
-                await asyncio.wait_for(export_rapido(client, chat), 1000)
+                await asyncio.wait_for(export_rapido(client, chat), TIMOUT)
                 write_users()
             except asyncio.TimeoutError:
                 logger.info(f'Tiemout {chat.id} ')
@@ -168,7 +168,7 @@ async def seacher(client: TelegramClient):
             await _seacher(client, key)   
 
 async def _run(session):
-    client = TelegramClient(session, api_id, api_hash, flood_sleep_threshold=60, base_logger=logger, receive_updates=False)
+    client = TelegramClient(session, api_id, api_hash, base_logger=logger, receive_updates=False)
     await client.connect()
     me = await client.get_me()
     if me:
@@ -191,7 +191,7 @@ async def run(session, semaphore):
             logger.warning(f'Erro ao processar session {session} {e}')
 
 async def main():
-    semaphore = asyncio.Semaphore(max_tasks)
+    semaphore = asyncio.Semaphore(MAX_TASKS)
     tasks = []
     sessions = [
         session.replace('.session', '') 
@@ -202,7 +202,6 @@ async def main():
         logger.print_output('Sem sessions na pasta')
     
     for phone in sessions:
-        await asyncio.sleep(2.3)  
         task = asyncio.create_task(run(phone, semaphore))
         tasks.append(task)
 
